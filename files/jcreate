@@ -1,0 +1,272 @@
+#!/bin/sh
+
+Jdir=`dirname $(readlink -f $0)`
+. $Jdir/functions
+
+CreateBridge()
+{
+	if $(Ask "Do you want to create a bridge and make it persistent (y/n)?"); then
+		Cbridge="$Bridge"
+		li="$(ifconfig -l)"
+		ifconfig bridge782 create
+		ifconfig bridge782 name $Cbridge
+		if [ "$?" -ne 0 ]; then
+			echo "Cannot create or name $Cbridge."
+			unset Cbridge
+			return
+		fi
+		sysrc cloned_interfaces+="bridge782"
+		sysrc ifconfig_bridge782_name="$Cbridge"
+		echo "Bridge $Cbridge created and made persistent (rc.conf)."
+		echo "You should add as member the interface that bring internet."
+		echo "Possible interfaces are: $li"
+		rep="$(Choose "Interface" "$li")"
+		if [ -n "$rep" ]; then
+			ifconfig $Cbridge addm "$rep"
+			if [ "$?" -eq 0 ]; then
+				sysrc ifconfig_${Cbridge}="addm "$rep" up"
+			else
+				echo "Cannot add $rep as member of $Cbridge."
+			fi
+		fi
+	else
+		echo "No bridge created."
+	fi
+}
+
+Vnet()
+{
+	local lb="$(ifconfig -g bridge | awk '{ printf "%s ", $1 }')" # \n -> space
+	local rep m
+	unset Cbridge
+	if [ -z "$lb" ]; then
+		echo "There is no bridge interface on your system."
+		CreateBridge
+	else
+		echo "On which bridge do you want to connect your jail?"
+		echo "Possible bridges are: $lb"
+		Cbridge="$(Choose "Bridge" "$lb")"	
+		if [ -z "$Cbridge" ]; then
+			CreateBridge
+		fi	
+	fi
+	if [ -z "$Cbridge" ]; then
+		echo "No bridge have been created/choosen."
+		echo "VNET is therefore disabled on this jail."
+		vnet=false
+		return
+	fi
+	if ! ($dhcp); then
+		Dgw="$(netstat -rn4 | grep default | awk '{ print $2 }')"
+		if ! $(Is_ipv4 "$Dgw"); then
+			unset Dgw
+		fi
+		echo "Please enter a Gateway for the jail."
+		if [ -n "$Dgw" ]; then
+			echo "Default is $Dgw (the one of the host)."
+			m="Gateway [Enter=default]: "
+		else
+			m="Gateway: "
+		fi
+		unset rep
+		while true; do
+			read -p "$m" rep
+			if [ -n "$Dgw" ] && [ -z "$rep" ]; then
+				break
+			fi
+			if $(Is_ipv4 "$rep"); then
+				Dgw="$rep"
+				break
+			fi
+		done
+	fi	
+}
+
+#******* Main ********
+
+# Get the root zfs dataset name
+zJail=`GetKjailDataset`
+if [ -z "$zJail" ]; then
+	echo "Cannot found the kjail root dataset."
+	return 1
+fi
+
+if [ -z "$(ls $Jdir/base)" ]; then
+	echo "Base is empty. Use loadbase before to create a jail."
+	return 1
+fi
+
+if [ -z "$1" ]; then
+	read -p "Jail name? " Jname	
+	if [ -z "$Jname" ]; then
+		echo "Jail name can't be empty."
+		return 1
+	fi
+else
+	Jname="$1"
+fi
+
+Jaildir="$Jdir/jails/$Jname"
+
+if $(Dexists $Jaildir); then
+	echo "This jail name already exists. Choose another one."
+	return 1
+fi
+
+echo "We are about to create a new jail named $Jname."
+if ! $(Ask "Proceed (y/N)?");  then
+	echo "Jail creation canceled."
+	return 0
+fi
+unset rep
+
+zJail="$zJail/jails/$Jname"
+
+echo "Do you want to assign an ipv4 address to this jail?"
+dhcp=false
+vnet=false
+while true; do
+	echo "The format is n1.n2.n3.n4/mask (mask: 0 - 32) or DHCP (VNET only)."
+	read -p 'Ipv4 address [Enter=none]? ' rep
+	rep="$(printf "%s" "$rep" | tr '[:lower:]' '[:upper:]')"
+	if [ "$rep" == "DHCP" ]; then
+		dhcp=true
+		vnet=true
+		echo "Switching the jail to VNET..."
+		break
+	fi
+	if [ -z "$rep" ] || $(Is_ipv4_EM "$rep"); then
+		break;
+	else
+		echo "Incorrect ipv4."
+	fi
+done
+	
+if [ -n "$rep" ]; then
+	ip4="$rep"
+	if ($vnet) || $(Ask "Do you want to set a VNET jail (y/N)?"); then
+		vnet=true
+		Vnet
+	fi
+	if ! ($vnet); then
+		if ($dhcp); then
+			echo "DHCP without VNET isn't possible."
+			echo "Jail creation canceled."
+			return 1
+		fi
+		echo "Ok, no VNET. Please specify an interface for the ip."
+		unset rep
+		li="$(ifconfig -l)"
+		echo "Possible interfaces are: $li"
+		rep="$(Choose "Interface:" "$li")"
+		if [ -n "$rep" ]; then
+			interface="$rep" 
+		fi
+	fi
+fi
+unset rep
+
+ttc="no-net"
+if ($vnet); then
+	if ($dhcp); then
+		ttc="vnet-dhcp"		
+	else
+		ttc="vnet-ip"
+	fi
+else
+	if [ -n "$ip4" ]; then
+		ttc="alias-ip"
+	fi
+fi
+
+echo "Create dataset $zJail."
+zfs create $zJail
+
+echo "Create the conf file: $Jaildir/$Jname.conf"
+cp "$Jdir/templates/$ttc" "$Jaildir/$Jname.conf"
+
+sed -i '' -e "s%#name#%$Jname%1" "$Jaildir/$Jname.conf"
+sed -i '' -e "s%#path#%$Jaildir/root%1" "$Jaildir/$Jname.conf"
+sed -i '' -e "s%#fstab#%$Jaildir/$Jname.fstab%1" "$Jaildir/$Jname.conf"
+sed -i '' -e "s%#ip#%$ip4%1" "$Jaildir/$Jname.conf"
+sed -i '' -e "s%#if#%$interface%1" "$Jaildir/$Jname.conf"
+sed -i '' -e "s%#bridge#%$Cbridge%1" "$Jaildir/$Jname.conf"
+sed -i '' -e "s%#gw#%$Dgw%1" "$Jaildir/$Jname.conf"
+men="$(jot -r 1 1000 9999)"
+sed -i '' -e "s%#epair#%$men%1" "$Jaildir/$Jname.conf"
+
+echo "Create the fstab file: $Jaildir/$Jname.fstab"
+echo "$Jdir/base $Jaildir/root/base nullfs ro 0 0" > $Jaildir/$Jname.fstab
+
+echo "Create dir $Jaildir/root"
+mkdir $Jaildir/root
+cd $Jaildir/root
+
+echo "Copy files from base..."
+mkdir usr
+tocopy='dev etc media mnt net proc root tmp usr/local usr/tests var COPYRIGHT'
+for d in $tocopy; do
+	cp -Rp $Jdir/base/$d $d
+done
+
+echo "Create dir $Jaildir/root/base"
+mkdir base
+
+echo 'Create links to base jail.'
+tolink='bin boot lib libexec sbin usr/bin usr/include usr/lib usr/libdata usr/libexec usr/sbin usr/src usr/share'
+for dir in $tolink; do
+	ln -s /base/${dir} ${dir}
+done
+
+# Delete the enabling of FreeBSD-Base
+ConfDir="$Jaildir/root/usr/local/etc/pkg/repos"
+rm $ConfDir/*.conf
+
+MountBaseDev
+br=$(GetBaseRepo even-not-enabled)
+kr=$(GetKmodsRepo)
+pr=$(GetPortsRepo)
+UmountBaseDev
+PortsURL="$(cat $Jdir/base/etc/pkg/FreeBSD.conf | grep '/quarterly' | sed -e 's#quarterly#latest#1')"
+PortURL="$pr: { $PortURL }" 
+
+if [ -n "$br" ]; then
+	JailConf="$br: { enabled: no }"
+fi
+if [ -n "$kr" ]; then
+	JailConf="${JailConf}
+$kr: { enabled: no }"
+fi
+
+if [ -n "$JailConf" ]; then
+	mkdir -p "$ConfDir"
+	echo "$JailConf" > "$ConfDir/jail.conf"
+else
+	echo "Warning: no base and no kmods repos detected in base."
+fi
+echo 'Applying settings to this jail.'
+cp -Rp $Jdir/settings/ .
+
+if [ -z "$pr" ]; then
+	echo "Warning: cannot find Ports repo in base."
+else
+	echo -n "Do you want this jail be on the latest ports repo?"
+	read -p ' [y/n]? ' rep
+	case "$rep" in
+		[yY]*) 	mkdir -p "$JailDir/root/usr/local/etc/pkg/repos"
+			echo $PortURL > "$JailDir/root/usr/local/etc/pkg/repos/latest.conf"
+			echo "Switched to the latest ports repo.";;
+		*) 	echo "This jail stays on the quarterly repo."
+	esac
+fi
+
+echo -n "Do you want this jail be automatically launched at boot"
+read -p ' [y/n]? ' rep
+case "$rep" in
+	[yY]*) 	sysrc -f $kjconf jails_list+="$Jname"
+		echo 'Added at the startup list.';;
+	*) 	sysrc -f $kjconf jails_list-="$Jname"
+		echo 'Not added at the startup list.'
+esac
+
+echo "*** Jail creation completed. ***"

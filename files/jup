@@ -1,0 +1,49 @@
+#!/bin/sh
+
+Jdir=`dirname $(readlink -f $0)`
+
+# Source common functions
+. $Jdir/functions
+
+name=$1
+if [ -z "$name" ]; then
+	jl="$(RKjails)"
+	if [ -z "$jl" ]; then
+		echo "No jail are currentling running, cannot pkg upgrade."
+		exit 1
+	fi
+	echo "You're about to pkg upgrade all running jails."
+	echo "These jails are: $jl"
+	if ! $(Ask "Do you really want to do that (y/N)?"); then
+		echo "No jail upgrade issued."
+		return 0
+	fi
+else
+	TestExists $name
+	if !([ $(TestRunning $name) ]); then
+		echo "Jail $name isn't running."
+		if $(Ask "Do you want to start it in order to proceed (y/N)?"); then
+			$Jdir/start $name
+		else
+			echo "Jail pkg upgrade canceled."
+	   	   	return 0
+		fi
+		if !([ $(TestRunning $name) ]); then
+			echo "Cannot start the jail. Pkg upgrade aborted."
+			exit 1
+		fi
+	fi
+	jl=$name
+fi
+	
+for j in $jl; do
+	echo "Upgrading jail $j."
+	echo "Delete previous jail snapshot $jail@ok if any, and create a new one."
+	MainSnap jail destroy $j ok > /dev/null 2>&1
+	MainSnap jail create $j ok	
+	jexec $j /usr/sbin/pkg upgrade -y
+	jexec $j /usr/sbin/pkg autoremove -y
+	$Jdir/restart $j	
+done
+
+echo "Jail(s) pkg upgrade done."

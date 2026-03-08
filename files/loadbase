@@ -1,0 +1,97 @@
+#!/bin/sh
+
+Jdir=`dirname $(readlink -f $0)`
+
+# Source common functions
+. $Jdir/functions
+
+
+#******* Main ********
+
+rd=$(GetKjailDataset)
+if [ -z "rd" ]; then
+	echo "Cannot found the kjail root dataset."
+	return 1
+fi
+
+rel="$(freebsd-version)"
+TestRel "$rel"
+
+jl="$(RKjails)"
+if [ -n "$jl" ]; then
+	echo "One or more kjails are running, please stop them before loadbase."
+	return 1
+fi
+
+echo "You're going to populate the base with FreeBSD $rel."
+if ! $(Ask "Are you ok (y/N)?"); then
+	echo "loadbase canceled."
+	return 1
+fi
+
+base="$Jdir/base"
+
+UmountBaseDev # Who knows?
+if [ -z "$(find $base -d 0 -type d -empty)" ]; then
+	if $(Ask "Base isn't empty, do you want to delete the current one (y/N)?"); then
+		echo "Wipping out base..."
+		# If there is no snap, the quicker is to destroy and recreate the dataset
+		if [ -z "$($Jdir/bsnap list)" ]; then
+			zfs destroy -f "$rd/base"
+			zfs create "$rd/base"
+		else
+			chflags -R noschg $base/
+			rm -Rf $base/*
+			if [ "$?" -ne 0 ]; then 
+				echo "Error during the file deletion process."
+				echo "To recover a clean base: zfs destroy -rRf $rd/base"
+				echo "Then: zfs create $rd/base"
+				echo "But you will lose your base snapshots."
+				exit 1
+			fi
+			rm -f $base/.cshrc $base/.profile
+		fi		
+	else
+		echo "Operation canceled."
+		return 0
+	fi
+fi
+
+# Copy all the keys that pkg needs
+mkdir -p "$base/usr/share/keys"
+cp -R /usr/share/keys/* "$base/usr/share/keys/"
+TestErr "Error during the copy of the pkg keys" $?
+
+# Case where the host isn't pkgbasified
+if [ -z "$(pkg repos -le | grep base)" ]; then 
+	reposdir="-R $Jdir/templates" # Use pkgbase.conf
+fi
+
+pkg -r "$base" $reposdir install -y FreeBSD-set-base-jail
+TestErr "Cannot install base" $?
+pkg -r "$base" $reposdir install -y FreeBSD-src
+TestErr "Cannot install sources" $?
+	
+resolv="/etc/resolv.conf"
+if [ -e "$resolv" ]; then
+	echo "Coping $resolv from host in base."
+	cp "$resolv" "$base/etc/"
+else
+	echo "There is no $resolv in host. Do you expect all will flow good?"
+fi
+
+MountBaseDev
+chroot "$base" pkg bootstrap -fy
+TestErr "Cannot bootstrap pkg(8)." $?
+
+# Well, it should be obvious, but the base repo isn't automaticaly enabled
+if [ -z "$(GetBaseRepo)" ]; then
+	Drepo="$base/usr/local/etc/pkg/repos"
+	mkdir -p "$Drepo"
+	br="$(GetBaseRepo even-not-enabled)"
+	echo "${br}: { enabled: yes }" > "$Drepo/pkgbase.conf"
+fi
+
+UmountBaseDev
+
+echo "*** Base $rel loaded. ***"

@@ -1,0 +1,33 @@
+#!/bin/sh
+
+Jdir=`dirname $(readlink -f $0)`
+. $Jdir/functions
+
+TestArg $0 $1
+TestExists $1
+
+Jname=$1
+
+echo "You're about to destroy the jail $Jname..."
+if ! $(Ask "This will be irreversible, are you sure (y/N)?"); then
+	echo "Destruction canceled."
+fi
+
+if [ `TestRunning $Jname` ]; then
+	$Jdir/stop $Jname
+fi
+
+# Get the root zfs dataset name
+zJail=`GetKjailDataset`
+if [ -z "$zJail" ]; then
+	echo "Cannot found the kjail root dataset."
+	return 1
+fi
+
+zJail="$zJail/jails/$Jname"
+
+zfs destroy -rRf $zJail
+sysrc -f $kjconf jails_list-="$Jname"
+
+echo "*** Jail $Jname destroyed. ***"
+

@@ -1,0 +1,50 @@
+#!/bin/sh
+
+Jdir=`dirname $(readlink -f $0)`
+. $Jdir/functions
+
+usage()
+{
+	echo 'Usage:'
+	echo "$0 [create|destroy|rollback] SnapshotName"
+	echo "$0 list"
+	exit 1
+}
+
+if [ -z "$1" ]; then
+	usage
+fi
+reset=false
+case "$1" in
+	l*) ;;
+	*) if [ -z "$2" ]; then
+		usage
+	   fi
+esac
+case "$1" in
+	r*) jl=`RKjails`
+	    if [ -n "$jl" ]; then
+		if $(Ask "Some jails are running. Need to shutdown them before. (y/N)"); then
+			for j in $jl; do
+			        echo -n "Stopping jail $j. "
+				$Jdir/stop $j	
+			done
+			reset=true
+		else
+			echo "Rollback canceled."
+			return 0
+		fi
+	   fi
+esac
+
+MainSnap base $1 $2
+case "$?" in
+	1) usage;;
+	2) return 1;;
+esac
+if $reset; then
+	for j in $jl; do
+		echo "Starting jail $j."	
+		$Jdir/start $j > /dev/null
+	done
+fi

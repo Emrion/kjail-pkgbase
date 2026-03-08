@@ -1,0 +1,29 @@
+#!/bin/sh
+
+Jdir=`dirname $(readlink -f $0)`
+
+# Source common functions
+. $Jdir/functions
+
+MountBaseDev
+br="$(GetBaseRepo)"
+if [ -z "$br" ]; then
+	echo "No base repo detected -> Panic!"
+	UmountBaseDev
+	exit 1
+fi
+
+echo 'Delete previous base snapshot "Ok" if any, and create a new one.'
+MainSnap base destroy ok > /dev/null 2>&1
+MainSnap base create ok
+
+chroot "$Jdir/base" pkg upgrade -y -r $br
+TestErr "Error during update." $?
+UmountBaseDev
+
+for j in `RKjails`; do
+	echo "Restart jail $j..."
+	"$Jdir/restart" "$j" > /dev/null
+done
+
+echo '*** Base update completed. ***'

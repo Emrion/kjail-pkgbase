@@ -1,0 +1,98 @@
+#!/bin/sh
+
+Jdir=`dirname $(readlink -f $0)`
+. $Jdir/functions
+
+usage()
+{
+	echo 'Usage:'
+	echo "$0 OldJailName NewJailName"
+	exit 1
+}
+
+ChangeName()
+{
+	local dir="$1"
+	local Oname="$2"	
+	local Nname="$3"
+	mv "$dir/${Oname}.conf" "$dir/${Nname}.conf"
+	mv "$dir/${Oname}.fstab" "$dir/${Nname}.fstab"
+
+	sed -i "" -e "s#$Oname {#$Nname {#" $dir/${Nname}.conf
+	sed -i "" -e "s#/jails/$Oname#/jails/$Nname#g" $dir/${Nname}.fstab
+}
+
+if [ -z "$2" ]; then
+	usage
+fi
+
+oldname=$1
+newname=$2
+
+TestExists $oldname
+r="$(CheckName "$newname")"
+if [ -n "$r" ]; then
+	echo "Jail name: $r"
+	return 1
+fi
+if $(Dexists "$Jdir/jails/$newname"); then
+	echo "The new jail name already exists. Choose another one."
+	return 1
+fi
+
+# Get the root zfs dataset name
+zJail=`GetKjailDataset`
+if [ -z "$zJail" ]; then
+	echo "Cannot found the kjail root dataset."
+	return 1
+fi
+
+zJail="$zJail/jails"
+reset=false;
+
+if [ "$(TestRunning $oldname)" ]; then
+		if $(Ask "This jail is running. Need to shut it down before. (y/N)"); then
+			echo -n "Stopping jail... "
+			$Jdir/stop $oldname > /dev/null
+			echo "Done."
+			reset=true
+		else
+			echo "Rename canceled."
+			return 0
+		fi
+fi
+
+echo "Renaming... "
+zfs rename -f "$zJail/$oldname" "$zJail/$newname"
+TestErr "Cannot rename dataset $zJail/$oldname" $?
+
+ChangeName "$Jdir/jails/$newname" "$oldname" "$newname"
+
+# Proceed snap
+# snapshots are renamed automatically but not clones
+lsnap="$(zfs list -o name -t filesystem | grep "$oldname" | sed -e "s#${Ssep}#@#1" | cut -d @ -f2)"
+if [ -n "$lsnap" ]; then
+	for s in $lsnap; do
+		zfs rename -f "$zJail/${oldname}${Ssep}$s" "$zJail/${newname}${Ssep}$s"
+		# We have some files to modify in each clone
+		zfs mount "$zJail/${newname}${Ssep}$s"
+		ChangeName "/$zJail/${newname}${Ssep}$s" "$oldname" "$newname"
+		zfs unmount "$zJail/${newname}${Ssep}$s"
+		rmdir "/$zJail/${newname}${Ssep}$s"
+	done
+fi
+
+if [ -n "$(echo $jails_list | grep $oldname)" ]; then
+	echo "Replacing $oldname with $newname in jails starting list."
+	sysrc -f $kjconf jails_list-="$oldname"
+	sysrc -f $kjconf jails_list+="$newname"	
+fi
+
+if $reset; then
+	echo -n "Starting jail $newname... "
+	$Jdir/start $newname > /dev/null
+	echo "Done."
+fi
+
+echo "*** Jail renamed from $oldname to $newname. ***"
+

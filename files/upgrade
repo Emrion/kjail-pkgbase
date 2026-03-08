@@ -1,0 +1,101 @@
+#!/bin/sh
+
+Jdir=`dirname $(readlink -f $0)`
+
+# Source common functions
+. $Jdir/functions
+
+
+#******* Main ********
+
+Tver=$1
+
+# Test if the host is equal or superior to the requested release
+TestRel $Tver
+
+# drM desired Major number version, set by TestRel
+# drm desired minor number version, set by TestRel
+Cver=$(chroot "$Jdir/base" freebsd-version)
+abM="$(echo "$Cver" | cut -d . -f 1)"
+abm="$(echo "$Cver" | cut -d . -f 2 | cut -d - -f 1)"
+
+echo "Current version: ${Cver}."
+echo "Target version: ${Tver}."
+
+e="Cannot downgrade the base."
+if [ "$drM" -lt "$abM" ]; then
+	echo "$e"
+	exit 1
+fi
+if [ "$drM" -eq "$abM" ] && [ "$drm" -le "$abm" ]; then
+	if [ "$drm" -eq "$abm" ]; then
+		echo "Base RELEASE: desired = current. Nothing to do?"
+	else
+		echo "$e"
+	fi
+	exit 1
+fi
+
+echo 'Delete previous base snapshot "Ok" if any, and create a new one.'
+MainSnap base destroy ok > /dev/null 2>&1
+MainSnap base create ok
+
+if [ $(echo -n "$drm" | wc -m) -eq 1 ]; then
+	drm="0$drm"
+fi
+arch=$(sysctl -n hw.machine)
+osversion="${drM}${drm}000"
+abi="FreeBSD:$drM:$arch"
+
+jl="$(RKjails)"
+echo
+echo 'Warning! Only the currently running jails will be properly upgraded.'
+echo "These jails are: $jl."
+echo "Note the list of kjail startup jails: $jails_list."
+echo 'If there are some others jails to upgrade, open a new CLI and start them before to proceed!'
+read -p 'Press enter when ready.' rep
+echo
+
+MountBaseDev
+if [ "$abM" != "$drM" ]; then
+	echo
+	echo '-------------------------------'
+	echo 'Major release upgrade detected.'
+	echo '-------------------------------'
+fi
+
+chroot "$Jdir/base" pkg-static -o ABI=$abi -o OSVERSION=$osversion -o IGNORE_OSVERSION=yes upgrade  -yf
+TestErr "Error during the upgrade." $?
+UmountBaseDev
+
+jl="$(RKjails)"
+for j in $jl; do
+	echo "Delete previous jail snapshot $jail@ok if any, and create a new one."
+	MainSnap jail destroy $j ok > /dev/null 2>&1
+	MainSnap jail create $j ok
+	echo "Restart jail $j..."
+	"$Jdir/restart" "$j" > /dev/null
+done
+
+for j in $jl; do
+	echo "Merging config files for Jail $j..."
+	jexec "$j" /usr/sbin/etcupdate diff > /dev/null
+	jexec "$j" /usr/sbin/etcupdate > /dev/null
+	jexec "$j" /usr/sbin/etcupdate resolve
+	echo "Restart jail $j..."	
+	"$Jdir/restart" "$j" > /dev/null
+done
+
+if [ "$abM" != "$drM" ]; then
+	for j in $jl; do
+		echo "Reinstalling packages for jail $j..."
+		jexec "$j" /usr/sbin/pkg bootstrap -fy	
+		jexec "$j" /usr/local/sbin/pkg-static upgrade -fy
+		jexec "$j" /usr/local/sbin/pkg-static autoremove -y	
+	done
+fi
+	
+echo '*** Base upgrade completed. ***'
+
+
+	
