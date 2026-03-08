@@ -1,6 +1,7 @@
 # 1) Description  
 
-This is kjail-pkgbase, the next version of kjail. It's a set of jail management tools that uses exclusively pkgbase. kjail manages only the jails created by itself. It works only with official supported RELEASE(s). **It requires ZFS.**
+This is kjail-pkgbase, the next version of kjail. It's a set of jail management tools that uses exclusively pkgbase. kjail manages only the jails created by itself. It works only with official supported RELEASE(s).
+**It requires ZFS.**
   
   
 # 2) Installation  
