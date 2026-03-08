@@ -1,8 +1,11 @@
 # 1) Description  
 
-This is kjail-pkgbase, the next version of kjail. It's a set of jail management tools that uses exclusively pkgbase. kjail manages only the jails created by itself. It works only with official supported RELEASE(s).  
+This is kjail-pkgbase, the next version of kjail. It's a set of jail management tools that uses exclusively pkgbase. kjail manages only the jails created by itself. It works only with official supported RELEASE(s) and not below 15.0-RELEASE.  
 **It requires ZFS.**
-  
+
+Improvements!
+- The snap system now can rollback any save, not only the last one.
+- It's possible to configure VNET jails including those that use DHCP.
   
 # 2) Installation  
 
