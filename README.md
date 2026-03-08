@@ -5,7 +5,7 @@ This is kjail-pkgbase, the next version of kjail. It's a set of jail management 
 
 Improvements!
 - The snap system now can rollback any save, not only the last one.
-- It's possible to configure VNET jails including those that use DHCP.
+- It's possible to configure VNET jails at creation time including those that use DHCP.
   
 # 2) Installation  
 
