@@ -1,0 +1,26 @@
+#name# {
+	path = "#path#";
+	host.hostname = "${name}"; 
+	exec.start = "/bin/sh /etc/rc";
+	exec.stop = "";
+	exec.clean; 
+	mount.devfs;
+	mount.procfs;
+	mount.fstab = "#fstab#";
+	$if = "epair#epair#";
+	$br = "#bridge#";
+	$ip = "#ip#";
+	$gw = "#gw#";
+ 	vnet;
+	vnet.interface = "${if}_J";
+	exec.prestart += "ifconfig ${if} destroy 2> /dev/null || true";
+ 	exec.prestart += "ifconfig ${if} create up";
+ 	exec.prestart += "ifconfig ${if}a name ${if}";
+ 	exec.prestart += "ifconfig ${if}b name ${if}_J";
+	exec.prestart += "ifconfig ${if} descr jail:${name}";
+ 	exec.prestart += "ifconfig ${br} addm ${if} up";
+ 	exec.prestart += "cp /etc/resolv.conf ${path}/etc/";
+ 	exec.start    += "ifconfig ${if}_J ${ip} up";
+ 	exec.start    += "route add default ${gw}";
+	exec.poststop += "ifconfig ${if} destroy";
+}

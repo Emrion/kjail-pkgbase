@@ -1,0 +1,13 @@
+#name# {
+	path = "#path#";
+	host.hostname = "${name}"; 
+	exec.start = "/bin/sh /etc/rc";
+	exec.stop = "";
+	exec.clean; 
+	mount.devfs;
+	mount.procfs;
+	mount.fstab = "#fstab#";
+	ip4.addr = #ip#;
+	interface = #if#;
+	exec.prestart += "cp /etc/resolv.conf ${path}/etc/";
+}
