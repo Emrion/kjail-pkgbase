@@ -73,7 +73,7 @@ All the jails resides in /\*kpool\*/kjail/jails/. When you create a jail, a new 
 
 When a jail is created, the whole content of /*kpool*/kjail/settings is copied in the root dir of this jail. You can put some files of the host or of your own like /etc/localtime, /etc/crontab, /etc/periodic.conf, /etc/rc.conf...
 
-The change of RELEASE (upgrade) is a real problem for nullfs jails because this requires the update of the config files in each jail. To solve this, kjail uses etcupdate after the base upgrade has been completed. etcupdate needs the sources of the base system, and that's why loadbase fetches them.
+The change of RELEASE (upgrade) is a real problem for nullfs jails because this requires the update of the config files in each jail. To solve this, kjail uses etcupdate after the base upgrade has been completed. etcupdate needs the sources of the base system, and that's why loadbase installs them.
 
 
 # 6) kjail man  
